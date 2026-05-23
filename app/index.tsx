@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React, { useState } from 'react';
 import { Alert, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, View } from 'react-native';
+import 'react-native-get-random-values';
 
 const DotBackground = ({ isDark }: { isDark: boolean }) => (
   <View style={styles.gridContainer} pointerEvents="none">
