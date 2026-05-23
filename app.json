@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Scanner POS",
-    "slug": "Scanner POS",
+    "slug": "scanner",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -23,7 +23,10 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "permissions": ["android.permission.CAMERA"]
+      "permissions": [
+        "android.permission.CAMERA"
+      ],
+      "package": "com.reogie.scanner"
     },
     "web": {
       "output": "static",
@@ -50,11 +53,18 @@
           "microphonePermission": false,
           "recordAudioAndroid": false
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "42bc6bef-81c3-4a40-8c60-b6f185ef3722"
+      }
     }
   }
 }
