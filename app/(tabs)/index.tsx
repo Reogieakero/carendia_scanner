@@ -42,8 +42,13 @@ interface Product {
     id: string;
     name: string;
     category: string;
-    price: number;
+    price: number;          // cost per unit for stock items
     image_url?: string;
+    product_type: 'food' | 'stock';
+    stock_quantity?: number;
+    stock_unit?: string;
+    low_stock_threshold?: number;
+    selling_price?: number; // selling price for stock items
 }
 
 function formatDate(iso: string): string {
@@ -70,6 +75,54 @@ function groupByDate(orders: OrderHistoryItem[]): { label: string; data: OrderHi
     return Object.entries(map).map(([label, data]) => ({ label, data }));
 }
 
+// ── Stock badge helper ────────────────────────────────────────────────────────
+function StockBadge({ product }: { product: Product }) {
+    if (product.product_type !== 'stock') return null;
+    const qty = product.stock_quantity ?? 0;
+    const threshold = product.low_stock_threshold ?? 0;
+    const isLow = threshold > 0 && qty <= threshold;
+    const isEmpty = qty <= 0;
+
+    return (
+        <View
+            style={[
+                stockStyles.badge,
+                isEmpty ? stockStyles.badgeEmpty : isLow ? stockStyles.badgeLow : stockStyles.badgeOk,
+            ]}
+        >
+            <Ionicons
+                name={isEmpty ? 'close-circle' : isLow ? 'warning' : 'checkmark-circle'}
+                size={10}
+                color={isEmpty ? '#dc2626' : isLow ? '#b45309' : '#15803d'}
+            />
+            <Text
+                style={[
+                    stockStyles.badgeText,
+                    isEmpty ? stockStyles.badgeTextEmpty : isLow ? stockStyles.badgeTextLow : stockStyles.badgeTextOk,
+                ]}
+            >
+                {isEmpty ? 'Out of stock' : isLow ? 'Low stock' : 'In stock'}
+            </Text>
+        </View>
+    );
+}
+
+// ── Stock info row ────────────────────────────────────────────────────────────
+function StockInfoRow({ product }: { product: Product }) {
+    if (product.product_type !== 'stock') return null;
+    const qty = product.stock_quantity ?? 0;
+    const unit = product.stock_unit || 'units';
+    return (
+        <View style={stockStyles.infoRow}>
+            <Ionicons name="cube-outline" size={11} color="#6b7280" />
+            <Text style={stockStyles.infoText}>
+                {qty.toLocaleString()} {unit} available
+            </Text>
+        </View>
+    );
+}
+
+// ── Receipt modal ─────────────────────────────────────────────────────────────
 function ReceiptModal({
     order,
     visible,
@@ -103,6 +156,7 @@ function ReceiptModal({
 
     const receiptNumber = order.idempotency_key.slice(0, 8).toUpperCase();
     const isSynced = order.status === 'synced';
+    const isStock = order.product_type === 'stock';
 
     return (
         <Modal visible={visible} animationType="none" transparent onRequestClose={onClose}>
@@ -118,9 +172,15 @@ function ReceiptModal({
                     <View style={receiptStyles.receiptCard}>
                         <View style={receiptStyles.receiptHeader}>
                             <View style={receiptStyles.logoMark}>
-                                <Ionicons name="restaurant" size={22} color="#ffc87a" />
+                                <Ionicons
+                                    name={isStock ? 'cube' : 'restaurant'}
+                                    size={22}
+                                    color="#ffc87a"
+                                />
                             </View>
-                            <Text style={receiptStyles.storeName}>Order Receipt</Text>
+                            <Text style={receiptStyles.storeName}>
+                                {isStock ? 'Stock Dispatch' : 'Order Receipt'}
+                            </Text>
                             <Text style={receiptStyles.receiptNo}>#{receiptNumber}</Text>
                         </View>
                         <View style={receiptStyles.dashedLine} />
@@ -137,12 +197,29 @@ function ReceiptModal({
                                     {order.product_category || '—'}
                                 </Text>
                             </View>
-                            <View style={receiptStyles.receiptRow}>
-                                <Text style={receiptStyles.receiptFieldLabel}>Unit Price</Text>
-                                <Text style={receiptStyles.receiptFieldValue}>
-                                    ₱ {Number(order.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                </Text>
-                            </View>
+                            {isStock ? (
+                                <>
+                                    <View style={receiptStyles.receiptRow}>
+                                        <Text style={receiptStyles.receiptFieldLabel}>Cost / Unit</Text>
+                                        <Text style={receiptStyles.receiptFieldValue}>
+                                            ₱ {Number(order.unit_cost ?? order.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </Text>
+                                    </View>
+                                    <View style={receiptStyles.receiptRow}>
+                                        <Text style={receiptStyles.receiptFieldLabel}>Selling Price</Text>
+                                        <Text style={receiptStyles.receiptFieldValue}>
+                                            ₱ {Number(order.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </Text>
+                                    </View>
+                                </>
+                            ) : (
+                                <View style={receiptStyles.receiptRow}>
+                                    <Text style={receiptStyles.receiptFieldLabel}>Unit Price</Text>
+                                    <Text style={receiptStyles.receiptFieldValue}>
+                                        ₱ {Number(order.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </Text>
+                                </View>
+                            )}
                             <View style={receiptStyles.receiptRow}>
                                 <Text style={receiptStyles.receiptFieldLabel}>Quantity</Text>
                                 <Text style={receiptStyles.receiptFieldValue}>× {order.quantity}</Text>
@@ -176,6 +253,28 @@ function ReceiptModal({
                             )}
                         </View>
                         <View style={receiptStyles.dashedLine} />
+                        {isStock && (
+                            <View style={receiptStyles.profitBlock}>
+                                <View style={receiptStyles.profitRow}>
+                                    <Text style={receiptStyles.profitLabel}>Revenue</Text>
+                                    <Text style={receiptStyles.profitValue}>
+                                        ₱ {Number(order.total_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </Text>
+                                </View>
+                                <View style={receiptStyles.profitRow}>
+                                    <Text style={receiptStyles.profitLabel}>Cost</Text>
+                                    <Text style={receiptStyles.profitCost}>
+                                        − ₱ {(Number(order.unit_cost ?? 0) * order.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </Text>
+                                </View>
+                                <View style={[receiptStyles.profitRow, receiptStyles.profitMarginRow]}>
+                                    <Text style={receiptStyles.profitMarginLabel}>Gross Profit</Text>
+                                    <Text style={receiptStyles.profitMarginValue}>
+                                        ₱ {(Number(order.total_price) - Number(order.unit_cost ?? 0) * order.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </Text>
+                                </View>
+                            </View>
+                        )}
                         <View style={receiptStyles.totalBlock}>
                             <Text style={receiptStyles.totalBlockLabel}>Total Amount</Text>
                             <Text style={receiptStyles.totalBlockValue}>
@@ -218,6 +317,386 @@ function ReceiptModal({
     );
 }
 
+// ── Stock product card (grid) ─────────────────────────────────────────────────
+function StockCard({ item, onPress, width: cardWidth }: { item: Product; onPress: () => void; width: number }) {
+    const qty = item.stock_quantity ?? 0;
+    const threshold = item.low_stock_threshold ?? 0;
+    const isLow = threshold > 0 && qty <= threshold;
+    const isEmpty = qty <= 0;
+    const stockColor = isEmpty ? '#dc2626' : isLow ? '#d97706' : '#16a34a';
+
+    return (
+        <TouchableOpacity
+            style={[styles.favCard, { width: cardWidth }, stockStyles.stockCard]}
+            onPress={onPress}
+            activeOpacity={0.8}
+            disabled={isEmpty}
+        >
+            {/* Product image or placeholder */}
+            {item.image_url && item.image_url.trim() !== '' ? (
+                <Image source={{ uri: item.image_url }} style={styles.productImg} />
+            ) : (
+                <View style={[styles.placeholderImg, stockStyles.stockPlaceholder]}>
+                    <Ionicons name="cube-outline" size={36} color="#93c5fd" />
+                </View>
+            )}
+
+            {/* Stock type tag */}
+            <View style={stockStyles.typeTag}>
+                <Ionicons name="cube" size={9} color="#3b82f6" />
+                <Text style={stockStyles.typeTagText}>STOCK</Text>
+            </View>
+
+            <Text style={styles.favName} numberOfLines={1}>{item.name}</Text>
+            <Text style={styles.favType} numberOfLines={1}>{item.category}</Text>
+
+            {/* Stock quantity */}
+            <View style={[stockStyles.stockQtyRow, { borderColor: stockColor + '33' }]}>
+                <Text style={[stockStyles.stockQty, { color: stockColor }]}>
+                    {qty.toLocaleString()}
+                </Text>
+                <Text style={stockStyles.stockUnit}>{item.stock_unit || 'units'}</Text>
+            </View>
+
+            {/* Price table */}
+            <View style={stockStyles.priceTable}>
+                <View style={stockStyles.priceTableRow}>
+                    <Text style={stockStyles.priceTableLabel}>Cost</Text>
+                    <Text style={stockStyles.priceTableValue}>
+                        ₱{Number(item.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </Text>
+                </View>
+                <View style={stockStyles.priceTableDivider} />
+                <View style={stockStyles.priceTableRow}>
+                    <Text style={stockStyles.priceTableLabel}>Sell</Text>
+                    <Text style={[stockStyles.priceTableValue, stockStyles.priceTableSell]}>
+                        ₱{Number(item.selling_price ?? item.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </Text>
+                </View>
+            </View>
+
+            {isEmpty ? (
+                <View style={stockStyles.outOfStockOverlay}>
+                    <Text style={stockStyles.outOfStockText}>Out of Stock</Text>
+                </View>
+            ) : (
+                <View style={styles.tapHint}>
+                    <Ionicons name="add-circle-outline" size={12} color="#3b82f6" />
+                    <Text style={[styles.tapHintText, { color: '#3b82f6' }]}>Tap to sell</Text>
+                </View>
+            )}
+        </TouchableOpacity>
+    );
+}
+
+// ── Stock product row (list) ──────────────────────────────────────────────────
+function StockRow({ item, onPress }: { item: Product; onPress: () => void }) {
+    const qty = item.stock_quantity ?? 0;
+    const threshold = item.low_stock_threshold ?? 0;
+    const isLow = threshold > 0 && qty <= threshold;
+    const isEmpty = qty <= 0;
+    const stockColor = isEmpty ? '#dc2626' : isLow ? '#d97706' : '#16a34a';
+
+    return (
+        <TouchableOpacity
+            style={[styles.tileRow, isEmpty && stockStyles.rowDisabled]}
+            onPress={onPress}
+            activeOpacity={isEmpty ? 1 : 0.8}
+            disabled={isEmpty}
+        >
+            {item.image_url && item.image_url.trim() !== '' ? (
+                <Image source={{ uri: item.image_url }} style={styles.tileImg} />
+            ) : (
+                <View style={[styles.tilePlaceholder, stockStyles.stockTilePlaceholder]}>
+                    <Ionicons name="cube-outline" size={26} color="#93c5fd" />
+                </View>
+            )}
+            <View style={styles.tileInfo}>
+                <View style={stockStyles.tileNameRow}>
+                    <Text style={styles.tileName} numberOfLines={1}>{item.name}</Text>
+                    <View style={stockStyles.typeTagSmall}>
+                        <Text style={stockStyles.typeTagSmallText}>STOCK</Text>
+                    </View>
+                </View>
+                <Text style={styles.tileCategory}>{item.category}</Text>
+
+                {/* Stock quantity indicator */}
+                <View style={stockStyles.tileStockRow}>
+                    <View style={[stockStyles.tileStockDot, { backgroundColor: stockColor }]} />
+                    <Text style={[stockStyles.tileStockQty, { color: stockColor }]}>
+                        {qty.toLocaleString()} {item.stock_unit || 'units'}
+                    </Text>
+                </View>
+
+                {/* Cost / Sell row */}
+                <View style={stockStyles.tilePriceRow}>
+                    <Text style={stockStyles.tileCost}>
+                        Cost ₱{Number(item.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </Text>
+                    <View style={stockStyles.tilePriceDivider} />
+                    <Text style={stockStyles.tileSell}>
+                        Sell ₱{Number(item.selling_price ?? item.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </Text>
+                </View>
+            </View>
+            <View style={styles.tileOrderBtn}>
+                {isEmpty ? (
+                    <Ionicons name="close-circle-outline" size={26} color="#d4d4d8" />
+                ) : (
+                    <Ionicons name="add-circle-outline" size={26} color="#3b82f6" />
+                )}
+            </View>
+        </TouchableOpacity>
+    );
+}
+
+// ── Manual order sheet — extended for stock items ─────────────────────────────
+function ManualOrderSheet({
+    product,
+    insets,
+    onConfirm,
+    onClose,
+}: {
+    product: Product;
+    insets: { bottom: number };
+    onConfirm: (price: number, qty: number) => Promise<void>;
+    onClose: () => void;
+}) {
+    const isStock = product.product_type === 'stock';
+    const defaultSell = isStock
+        ? String(product.selling_price ?? product.price)
+        : String(product.price);
+
+    const [price, setPrice] = useState(defaultSell);
+    const [qty, setQty] = useState(1);
+    const [confirmed, setConfirmed] = useState(false);
+    const [confirming, setConfirming] = useState(false);
+
+    const parsedPrice = parseFloat(price || '0');
+    const total = parsedPrice * qty;
+    const profit = isStock ? (parsedPrice - product.price) * qty : null;
+    const maxQty = isStock ? (product.stock_quantity ?? Infinity) : Infinity;
+
+    const handleConfirm = async () => {
+        if (!price || parsedPrice <= 0 || confirming) return;
+        if (isStock && qty > (product.stock_quantity ?? 0)) {
+            Alert.alert('Insufficient stock', `Only ${product.stock_quantity} ${product.stock_unit || 'units'} available.`);
+            return;
+        }
+        setConfirming(true);
+        try {
+            await onConfirm(parsedPrice, qty);
+            setConfirmed(true);
+        } finally {
+            setConfirming(false);
+        }
+    };
+
+    return (
+        <View style={[styles.manualSheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={styles.sheetHandle} />
+            {!confirmed ? (
+                <>
+                    {/* Product header */}
+                    <View style={styles.productHeader}>
+                        {product.image_url && product.image_url.trim() !== '' ? (
+                            <Image source={{ uri: product.image_url }} style={styles.resultImg} />
+                        ) : (
+                            <View style={[styles.resultImgPlaceholder, isStock && stockStyles.resultImgStock]}>
+                                <Ionicons
+                                    name={isStock ? 'cube-outline' : 'restaurant-outline'}
+                                    size={28}
+                                    color={isStock ? '#93c5fd' : '#c4b5a0'}
+                                />
+                            </View>
+                        )}
+                        <View style={styles.productHeaderText}>
+                            <View style={stockStyles.headerNameRow}>
+                                <Text style={styles.resultName} numberOfLines={1}>{product.name}</Text>
+                                {isStock && (
+                                    <View style={stockStyles.typeTagInline}>
+                                        <Text style={stockStyles.typeTagInlineText}>STOCK</Text>
+                                    </View>
+                                )}
+                            </View>
+                            <Text style={styles.resultCategory}>{product.category}</Text>
+                            {isStock && (
+                                <StockBadge product={product} />
+                            )}
+                        </View>
+                    </View>
+
+                    {/* Stock info table — only for stock items */}
+                    {isStock && (
+                        <View style={stockStyles.sheetInfoTable}>
+                            <View style={stockStyles.sheetInfoRow}>
+                                <Ionicons name="cube-outline" size={13} color="#6b7280" />
+                                <Text style={stockStyles.sheetInfoLabel}>Available</Text>
+                                <Text style={stockStyles.sheetInfoValue}>
+                                    {(product.stock_quantity ?? 0).toLocaleString()} {product.stock_unit || 'units'}
+                                </Text>
+                            </View>
+                            <View style={stockStyles.sheetInfoDivider} />
+                            <View style={stockStyles.sheetInfoRow}>
+                                <Ionicons name="pricetag-outline" size={13} color="#6b7280" />
+                                <Text style={stockStyles.sheetInfoLabel}>Cost per unit</Text>
+                                <Text style={stockStyles.sheetInfoValue}>
+                                    ₱ {Number(product.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </Text>
+                            </View>
+                        </View>
+                    )}
+
+                    {/* Price input */}
+                    <Text style={styles.manualPriceLabel}>
+                        {isStock ? 'Selling price (₱)' : 'Enter price (₱)'}
+                    </Text>
+                    <View style={styles.priceInputWrap}>
+                        <Text style={styles.pesoSign}>₱</Text>
+                        <TextInput
+                            style={styles.priceInput}
+                            value={price}
+                            onChangeText={(v) => setPrice(v.replace(/[^0-9.]/g, ''))}
+                            keyboardType="decimal-pad"
+                            placeholder={defaultSell}
+                            placeholderTextColor="#a1a1aa"
+                            returnKeyType="done"
+                        />
+                    </View>
+                    <View style={styles.defaultPriceRow}>
+                        <Text style={styles.defaultPriceHint}>
+                            {isStock ? 'Default selling price:' : 'Default price:'}
+                        </Text>
+                        <TouchableOpacity onPress={() => setPrice(defaultSell)}>
+                            <Text style={styles.defaultPriceValue}>
+                                ₱ {Number(isStock ? (product.selling_price ?? product.price) : product.price).toLocaleString(undefined, { minimumFractionDigits: 2 })} (tap to reset)
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.divider} />
+
+                    {/* Quantity */}
+                    <View style={styles.qtyRow}>
+                        <Text style={styles.qtyLabel}>Quantity</Text>
+                        <View style={styles.stepper}>
+                            <TouchableOpacity
+                                style={[styles.stepBtn, qty <= 1 && styles.stepBtnDisabled]}
+                                onPress={() => setQty((q) => Math.max(1, q - 1))}
+                                activeOpacity={0.7}
+                            >
+                                <Ionicons name="remove" size={18} color={qty <= 1 ? '#d4d4d8' : '#18181b'} />
+                            </TouchableOpacity>
+                            <Text style={styles.qtyValue}>{qty}</Text>
+                            <TouchableOpacity
+                                style={[styles.stepBtn, isStock && qty >= (product.stock_quantity ?? Infinity) && styles.stepBtnDisabled]}
+                                onPress={() => setQty((q) => isStock ? Math.min(product.stock_quantity ?? q + 1, q + 1) : q + 1)}
+                                activeOpacity={0.7}
+                            >
+                                <Ionicons name="add" size={18} color={isStock && qty >= (product.stock_quantity ?? Infinity) ? '#d4d4d8' : '#18181b'} />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+
+                    {/* Total */}
+                    <View style={styles.totalRow}>
+                        <Text style={styles.totalLabel}>Total</Text>
+                        <Text style={styles.totalValue}>
+                            ₱ {total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </Text>
+                    </View>
+
+                    {/* Gross profit preview for stock items */}
+                    {isStock && profit !== null && (
+                        <View style={stockStyles.profitPreview}>
+                            <View style={stockStyles.profitPreviewRow}>
+                                <Text style={stockStyles.profitPreviewLabel}>Gross Profit</Text>
+                                <Text style={[stockStyles.profitPreviewValue, profit < 0 && stockStyles.profitNeg]}>
+                                    {profit < 0 ? '−' : '+'}₱ {Math.abs(profit).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </Text>
+                            </View>
+                            {parsedPrice > 0 && (
+                                <View style={stockStyles.marginBar}>
+                                    <View
+                                        style={[
+                                            stockStyles.marginBarFill,
+                                            {
+                                                width: `${Math.min(100, Math.max(0, ((parsedPrice - product.price) / parsedPrice) * 100))}%`,
+                                                backgroundColor: profit < 0 ? '#f87171' : '#4ade80',
+                                            },
+                                        ]}
+                                    />
+                                </View>
+                            )}
+                            <Text style={stockStyles.marginLabel}>
+                                Margin: {parsedPrice > 0
+                                    ? `${(((parsedPrice - product.price) / parsedPrice) * 100).toFixed(1)}%`
+                                    : '—'}
+                            </Text>
+                        </View>
+                    )}
+
+                    <View style={styles.actionRow}>
+                        <TouchableOpacity style={styles.rescanBtn} onPress={onClose} activeOpacity={0.7}>
+                            <Ionicons name="close" size={15} color="#71717a" />
+                            <Text style={styles.rescanText}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[
+                                styles.confirmBtn,
+                                isStock && stockStyles.confirmBtnStock,
+                                (!price || parsedPrice <= 0 || confirming) && styles.confirmBtnDisabled,
+                            ]}
+                            onPress={handleConfirm}
+                            activeOpacity={0.85}
+                            disabled={!price || parsedPrice <= 0 || confirming}
+                        >
+                            {confirming ? (
+                                <ActivityIndicator size="small" color="#18181b" />
+                            ) : (
+                                <>
+                                    <Ionicons name="checkmark" size={17} color="#18181b" />
+                                    <Text style={styles.confirmText}>
+                                        {isStock ? 'Confirm Sale' : 'Confirm Order'}
+                                    </Text>
+                                </>
+                            )}
+                        </TouchableOpacity>
+                    </View>
+                </>
+            ) : (
+                <View style={styles.resultInner}>
+                    <Ionicons name="checkmark-circle" size={52} color="#4ade80" />
+                    <Text style={styles.confirmedTitle}>
+                        {product.product_type === 'stock' ? 'Sale Recorded!' : 'Order Added!'}
+                    </Text>
+                    <Text style={styles.confirmedSub}>{qty}× {product.name}</Text>
+                    <Text style={styles.confirmedTotal}>
+                        ₱ {total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </Text>
+                    {isStock && profit !== null && (
+                        <View style={stockStyles.confirmedProfit}>
+                            <Ionicons name="trending-up" size={14} color="#16a34a" />
+                            <Text style={stockStyles.confirmedProfitText}>
+                                Gross profit: ₱{Math.abs(profit).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </Text>
+                        </View>
+                    )}
+                    <View style={styles.actionRow}>
+                        <TouchableOpacity style={styles.rescanBtn} onPress={onClose} activeOpacity={0.7}>
+                            <Ionicons name="arrow-back" size={15} color="#71717a" />
+                            <Text style={styles.rescanText}>Back to Menu</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            )}
+        </View>
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Main screen
+// ═══════════════════════════════════════════════════════════════════════════════
 export default function HomeScreen() {
     const insets = useSafeAreaInsets();
 
@@ -264,12 +743,9 @@ export default function HomeScreen() {
     const [confirmed, setConfirmed] = useState(false);
     const [confirming, setConfirming] = useState(false);
     const [rawScanned, setRawScanned] = useState('');
+    const [scannedPrice, setScannedPrice] = useState('');
 
     const [manualOrderProduct, setManualOrderProduct] = useState<Product | null>(null);
-    const [manualPrice, setManualPrice] = useState('');
-    const [manualQuantity, setManualQuantity] = useState(1);
-    const [manualConfirmed, setManualConfirmed] = useState(false);
-    const [manualConfirming, setManualConfirming] = useState(false);
 
     const [permission, requestPermission] = useCameraPermissions();
     const scanLineAnim = useRef(new Animated.Value(0)).current;
@@ -358,6 +834,10 @@ export default function HomeScreen() {
         );
     }, [products, searchQuery]);
 
+    // Separate food and stock products for display
+    const foodProducts = useMemo(() => filteredProducts.filter(p => p.product_type === 'food'), [filteredProducts]);
+    const stockProducts = useMemo(() => filteredProducts.filter(p => p.product_type === 'stock'), [filteredProducts]);
+
     const handleOpenScanner = async () => {
         if (!permission?.granted) {
             const result = await requestPermission();
@@ -375,6 +855,7 @@ export default function HomeScreen() {
         setConfirmed(false);
         setConfirming(false);
         setRawScanned('');
+        setScannedPrice('');
     };
 
     const handleBarCodeScanned = ({ data }: { data: string }) => {
@@ -418,24 +899,45 @@ export default function HomeScreen() {
         }
         if (match) {
             setScannedProduct(match);
+            // pre-fill selling price for stock items
+            setScannedPrice(String(match.product_type === 'stock'
+                ? (match.selling_price ?? match.price)
+                : match.price));
             setNotFound(false);
         } else {
             setNotFound(true);
         }
     };
 
-    const handleConfirm = async () => {
+    // Unified confirm handler used by both scanner and manual sheet
+    const handleSaveOrder = async (product: Product, qty: number, sellingPrice: number, source: 'qr_scan' | 'manual') => {
+        const unitCost = product.product_type === 'stock' ? product.price : sellingPrice;
+        const order = buildOrder(product, qty, sellingPrice, source, {
+            unit_cost: unitCost,
+            product_type: product.product_type,
+        });
+        const result = await saveOrder(order);
+        await refreshPendingCount();
+        if (result === 'queued') {
+            Alert.alert('Saved offline', 'No internet detected. Order saved locally and will sync automatically.');
+        }
+        return result;
+    };
+
+    const handleConfirmScanned = async () => {
         if (!scannedProduct || confirming) return;
+        if (scannedProduct.product_type === 'stock' && quantity > (scannedProduct.stock_quantity ?? 0)) {
+            Alert.alert('Insufficient stock', `Only ${scannedProduct.stock_quantity} ${scannedProduct.stock_unit || 'units'} available.`);
+            return;
+        }
         setConfirming(true);
         try {
-            const order = buildOrder(scannedProduct, quantity, scannedProduct.price, 'qr_scan');
-            const result = await saveOrder(order);
+            const price = scannedProduct.product_type === 'stock'
+                ? parseFloat(scannedPrice || String(scannedProduct.selling_price ?? scannedProduct.price))
+                : scannedProduct.price;
+            await handleSaveOrder(scannedProduct, quantity, price, 'qr_scan');
             setConfirmed(true);
-            await refreshPendingCount();
-            if (result === 'queued') {
-                Alert.alert('Saved offline', 'No internet detected. Order saved locally and will sync automatically.');
-            }
-        } catch (e) {
+        } catch {
             Alert.alert('Error', 'Failed to save order. Please try again.');
         } finally {
             setConfirming(false);
@@ -443,40 +945,16 @@ export default function HomeScreen() {
     };
 
     const handleOpenManualOrder = (item: Product) => {
+        if (item.product_type === 'stock' && (item.stock_quantity ?? 0) <= 0) return;
         setManualOrderProduct(item);
-        setManualPrice(String(item.price));
-        setManualQuantity(1);
-        setManualConfirmed(false);
-        setManualConfirming(false);
     };
 
-    const handleManualConfirm = async () => {
-        if (!manualOrderProduct || manualConfirming) return;
-        const price = parseFloat(manualPrice);
-        if (!price || price <= 0) return;
-        setManualConfirming(true);
-        try {
-            const order = buildOrder(manualOrderProduct, manualQuantity, price, 'manual');
-            const result = await saveOrder(order);
-            setManualConfirmed(true);
-            await refreshPendingCount();
-            if (result === 'queued') {
-                Alert.alert('Saved offline', 'No internet detected. Order saved locally and will sync automatically.');
-            }
-        } catch (e) {
-            Alert.alert('Error', 'Failed to save order. Please try again.');
-        } finally {
-            setManualConfirming(false);
-        }
+    const handleManualConfirm = async (price: number, qty: number) => {
+        if (!manualOrderProduct) return;
+        await handleSaveOrder(manualOrderProduct, qty, price, 'manual');
     };
 
-    const resetManualOrder = () => {
-        setManualOrderProduct(null);
-        setManualPrice('');
-        setManualQuantity(1);
-        setManualConfirmed(false);
-        setManualConfirming(false);
-    };
+    const resetManualOrder = () => setManualOrderProduct(null);
 
     const openReceipt = (order: OrderHistoryItem) => {
         setSelectedOrder(order);
@@ -488,12 +966,15 @@ export default function HomeScreen() {
         setTimeout(() => setSelectedOrder(null), 300);
     };
 
-    const manualTotal = parseFloat(manualPrice || '0') * manualQuantity;
     const scanLineTranslate = scanLineAnim.interpolate({
         inputRange: [0, 1],
         outputRange: [0, 176],
     });
-    const total = scannedProduct ? scannedProduct.price * quantity : 0;
+    const scannedTotal = scannedProduct
+        ? (scannedProduct.product_type === 'stock'
+            ? parseFloat(scannedPrice || '0') * quantity
+            : scannedProduct.price * quantity)
+        : 0;
 
     const filteredHistory = history.filter((o) => {
         if (activeTab === 'all') return true;
@@ -516,6 +997,7 @@ export default function HomeScreen() {
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
             <View style={styles.viewContainer}>
+                {/* ── Menu view ── */}
                 <Animated.View
                     style={[
                         styles.viewPane,
@@ -589,11 +1071,12 @@ export default function HomeScreen() {
                             <Text style={styles.headline}>What would you like{'\n'}to eat?</Text>
                         )}
 
+                        {/* ── View mode toggle ── */}
                         <View style={styles.sectionRow}>
                             <Text style={styles.sectionTitle}>
                                 {searchOpen && searchQuery.trim()
                                     ? <>{filteredProducts.length} <Text style={styles.subTitle}>results</Text></>
-                                    : <>Available <Text style={styles.subTitle}>dishes</Text></>}
+                                    : <>Available <Text style={styles.subTitle}>items</Text></>}
                             </Text>
                             <View style={styles.toggleWrap}>
                                 <TouchableOpacity
@@ -616,69 +1099,123 @@ export default function HomeScreen() {
                         {filteredProducts.length === 0 ? (
                             <View style={styles.emptyState}>
                                 <Ionicons name="search-outline" size={48} color="#d4d4d8" />
-                                <Text style={styles.emptyText}>No dishes found</Text>
-                            </View>
-                        ) : viewMode === 'card' ? (
-                            <View style={styles.grid}>
-                                {filteredProducts.map((item) => (
-                                    <TouchableOpacity
-                                        key={item.id}
-                                        style={[styles.favCard, { width: CARD_WIDTH }]}
-                                        onPress={() => handleOpenManualOrder(item)}
-                                        activeOpacity={0.8}
-                                    >
-                                        {item.image_url && item.image_url.trim() !== '' ? (
-                                            <Image source={{ uri: item.image_url }} style={styles.productImg} />
-                                        ) : (
-                                            <View style={styles.placeholderImg}>
-                                                <Ionicons name="restaurant-outline" size={36} color="#c4b5a0" />
-                                            </View>
-                                        )}
-                                        <Text style={styles.favName} numberOfLines={1}>{item.name}</Text>
-                                        <Text style={styles.favType} numberOfLines={1}>{item.category}</Text>
-                                        <View style={styles.favFooter}>
-                                            <Text style={styles.price}>
-                                                ₱ {Number(item.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                            </Text>
-                                        </View>
-                                        <Text style={styles.servingText}>/per serving</Text>
-                                        <View style={styles.tapHint}>
-                                            <Ionicons name="add-circle-outline" size={12} color="#ffc87a" />
-                                            <Text style={styles.tapHintText}>Tap to order</Text>
-                                        </View>
-                                    </TouchableOpacity>
-                                ))}
+                                <Text style={styles.emptyText}>No items found</Text>
                             </View>
                         ) : (
-                            <View style={styles.tileList}>
-                                {filteredProducts.map((item) => (
-                                    <TouchableOpacity
-                                        key={item.id}
-                                        style={styles.tileRow}
-                                        onPress={() => handleOpenManualOrder(item)}
-                                        activeOpacity={0.8}
-                                    >
-                                        {item.image_url && item.image_url.trim() !== '' ? (
-                                            <Image source={{ uri: item.image_url }} style={styles.tileImg} />
-                                        ) : (
-                                            <View style={styles.tilePlaceholder}>
-                                                <Ionicons name="restaurant-outline" size={26} color="#c4b5a0" />
+                            <>
+                                {/* ── Food section ── */}
+                                {foodProducts.length > 0 && (
+                                    <>
+                                        {stockProducts.length > 0 && (
+                                            <View style={stockStyles.sectionHeader}>
+                                                <Ionicons name="restaurant-outline" size={14} color="#71717a" />
+                                                <Text style={stockStyles.sectionHeaderText}>Food & Drinks</Text>
                                             </View>
                                         )}
-                                        <View style={styles.tileInfo}>
-                                            <Text style={styles.tileName} numberOfLines={1}>{item.name}</Text>
-                                            <Text style={styles.tileCategory}>{item.category}</Text>
-                                            <Text style={styles.tilePrice}>
-                                                ₱ {Number(item.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                <Text style={styles.tileServing}> /serving</Text>
+                                        {viewMode === 'card' ? (
+                                            <View style={styles.grid}>
+                                                {foodProducts.map((item) => (
+                                                    <TouchableOpacity
+                                                        key={item.id}
+                                                        style={[styles.favCard, { width: CARD_WIDTH }]}
+                                                        onPress={() => handleOpenManualOrder(item)}
+                                                        activeOpacity={0.8}
+                                                    >
+                                                        {item.image_url && item.image_url.trim() !== '' ? (
+                                                            <Image source={{ uri: item.image_url }} style={styles.productImg} />
+                                                        ) : (
+                                                            <View style={styles.placeholderImg}>
+                                                                <Ionicons name="restaurant-outline" size={36} color="#c4b5a0" />
+                                                            </View>
+                                                        )}
+                                                        <Text style={styles.favName} numberOfLines={1}>{item.name}</Text>
+                                                        <Text style={styles.favType} numberOfLines={1}>{item.category}</Text>
+                                                        <View style={styles.favFooter}>
+                                                            <Text style={styles.price}>
+                                                                ₱ {Number(item.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                            </Text>
+                                                        </View>
+                                                        <Text style={styles.servingText}>/per serving</Text>
+                                                        <View style={styles.tapHint}>
+                                                            <Ionicons name="add-circle-outline" size={12} color="#ffc87a" />
+                                                            <Text style={styles.tapHintText}>Tap to order</Text>
+                                                        </View>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </View>
+                                        ) : (
+                                            <View style={styles.tileList}>
+                                                {foodProducts.map((item) => (
+                                                    <TouchableOpacity
+                                                        key={item.id}
+                                                        style={styles.tileRow}
+                                                        onPress={() => handleOpenManualOrder(item)}
+                                                        activeOpacity={0.8}
+                                                    >
+                                                        {item.image_url && item.image_url.trim() !== '' ? (
+                                                            <Image source={{ uri: item.image_url }} style={styles.tileImg} />
+                                                        ) : (
+                                                            <View style={styles.tilePlaceholder}>
+                                                                <Ionicons name="restaurant-outline" size={26} color="#c4b5a0" />
+                                                            </View>
+                                                        )}
+                                                        <View style={styles.tileInfo}>
+                                                            <Text style={styles.tileName} numberOfLines={1}>{item.name}</Text>
+                                                            <Text style={styles.tileCategory}>{item.category}</Text>
+                                                            <Text style={styles.tilePrice}>
+                                                                ₱ {Number(item.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                <Text style={styles.tileServing}> /serving</Text>
+                                                            </Text>
+                                                        </View>
+                                                        <View style={styles.tileOrderBtn}>
+                                                            <Ionicons name="add-circle-outline" size={26} color="#ffc87a" />
+                                                        </View>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </View>
+                                        )}
+                                    </>
+                                )}
+
+                                {/* ── Stock section ── */}
+                                {stockProducts.length > 0 && (
+                                    <>
+                                        <View style={[stockStyles.sectionHeader, { marginTop: foodProducts.length > 0 ? 24 : 0 }]}>
+                                            <Ionicons name="cube-outline" size={14} color="#3b82f6" />
+                                            <Text style={[stockStyles.sectionHeaderText, { color: '#3b82f6' }]}>
+                                                Stock Items
                                             </Text>
+                                            <View style={stockStyles.sectionBadge}>
+                                                <Text style={stockStyles.sectionBadgeText}>
+                                                    {stockProducts.filter(p => (p.stock_quantity ?? 0) > 0).length} in stock
+                                                </Text>
+                                            </View>
                                         </View>
-                                        <View style={styles.tileOrderBtn}>
-                                            <Ionicons name="add-circle-outline" size={26} color="#ffc87a" />
-                                        </View>
-                                    </TouchableOpacity>
-                                ))}
-                            </View>
+                                        {viewMode === 'card' ? (
+                                            <View style={styles.grid}>
+                                                {stockProducts.map((item) => (
+                                                    <StockCard
+                                                        key={item.id}
+                                                        item={item}
+                                                        onPress={() => handleOpenManualOrder(item)}
+                                                        width={CARD_WIDTH}
+                                                    />
+                                                ))}
+                                            </View>
+                                        ) : (
+                                            <View style={styles.tileList}>
+                                                {stockProducts.map((item) => (
+                                                    <StockRow
+                                                        key={item.id}
+                                                        item={item}
+                                                        onPress={() => handleOpenManualOrder(item)}
+                                                    />
+                                                ))}
+                                            </View>
+                                        )}
+                                    </>
+                                )}
+                            </>
                         )}
                     </ScrollView>
 
@@ -689,6 +1226,7 @@ export default function HomeScreen() {
                     </View>
                 </Animated.View>
 
+                {/* ── History view ── */}
                 <Animated.View
                     style={[
                         styles.viewPane,
@@ -811,13 +1349,29 @@ export default function HomeScreen() {
                                                     <View
                                                         style={[
                                                             styles.orderIconWrap,
-                                                            order.source === 'qr_scan' ? styles.orderIconQR : styles.orderIconManual,
+                                                            order.product_type === 'stock'
+                                                                ? stockStyles.orderIconStock
+                                                                : order.source === 'qr_scan'
+                                                                    ? styles.orderIconQR
+                                                                    : styles.orderIconManual,
                                                         ]}
                                                     >
                                                         <Ionicons
-                                                            name={order.source === 'qr_scan' ? 'qr-code-outline' : 'pencil-outline'}
+                                                            name={
+                                                                order.product_type === 'stock'
+                                                                    ? 'cube-outline'
+                                                                    : order.source === 'qr_scan'
+                                                                        ? 'qr-code-outline'
+                                                                        : 'pencil-outline'
+                                                            }
                                                             size={15}
-                                                            color={order.source === 'qr_scan' ? '#18181b' : '#6b7280'}
+                                                            color={
+                                                                order.product_type === 'stock'
+                                                                    ? '#3b82f6'
+                                                                    : order.source === 'qr_scan'
+                                                                        ? '#18181b'
+                                                                        : '#6b7280'
+                                                            }
                                                         />
                                                     </View>
                                                     <View style={styles.orderCardInfo}>
@@ -826,6 +1380,7 @@ export default function HomeScreen() {
                                                         </Text>
                                                         <Text style={styles.orderMeta}>
                                                             {order.quantity}× · {formatTime(order.created_at)}
+                                                            {order.product_type === 'stock' && ' · Stock'}
                                                         </Text>
                                                     </View>
                                                 </View>
@@ -850,6 +1405,7 @@ export default function HomeScreen() {
                 </Animated.View>
             </View>
 
+            {/* ── Manual order modal ── */}
             <Modal
                 visible={!!manualOrderProduct}
                 animationType="slide"
@@ -858,117 +1414,18 @@ export default function HomeScreen() {
             >
                 <View style={styles.manualOverlay}>
                     <TouchableOpacity style={StyleSheet.absoluteFillObject} onPress={resetManualOrder} activeOpacity={1} />
-                    <View style={[styles.manualSheet, { paddingBottom: insets.bottom + 16 }]}>
-                        <View style={styles.sheetHandle} />
-                        {!manualConfirmed && manualOrderProduct && (
-                            <>
-                                <View style={styles.productHeader}>
-                                    {manualOrderProduct.image_url && manualOrderProduct.image_url.trim() !== '' ? (
-                                        <Image source={{ uri: manualOrderProduct.image_url }} style={styles.resultImg} />
-                                    ) : (
-                                        <View style={styles.resultImgPlaceholder}>
-                                            <Ionicons name="restaurant-outline" size={28} color="#c4b5a0" />
-                                        </View>
-                                    )}
-                                    <View style={styles.productHeaderText}>
-                                        <Text style={styles.resultName} numberOfLines={2}>{manualOrderProduct.name}</Text>
-                                        <Text style={styles.resultCategory}>{manualOrderProduct.category}</Text>
-                                    </View>
-                                </View>
-                                <Text style={styles.manualPriceLabel}>Enter price (₱)</Text>
-                                <View style={styles.priceInputWrap}>
-                                    <Text style={styles.pesoSign}>₱</Text>
-                                    <TextInput
-                                        style={styles.priceInput}
-                                        value={manualPrice}
-                                        onChangeText={(v) => setManualPrice(v.replace(/[^0-9.]/g, ''))}
-                                        keyboardType="decimal-pad"
-                                        placeholder={String(manualOrderProduct.price)}
-                                        placeholderTextColor="#a1a1aa"
-                                        returnKeyType="done"
-                                    />
-                                </View>
-                                <View style={styles.defaultPriceRow}>
-                                    <Text style={styles.defaultPriceHint}>Default price:</Text>
-                                    <TouchableOpacity onPress={() => setManualPrice(String(manualOrderProduct.price))}>
-                                        <Text style={styles.defaultPriceValue}>
-                                            ₱ {Number(manualOrderProduct.price).toLocaleString(undefined, { minimumFractionDigits: 2 })} (tap to reset)
-                                        </Text>
-                                    </TouchableOpacity>
-                                </View>
-                                <View style={styles.divider} />
-                                <View style={styles.qtyRow}>
-                                    <Text style={styles.qtyLabel}>Quantity</Text>
-                                    <View style={styles.stepper}>
-                                        <TouchableOpacity
-                                            style={[styles.stepBtn, manualQuantity <= 1 && styles.stepBtnDisabled]}
-                                            onPress={() => setManualQuantity((q) => Math.max(1, q - 1))}
-                                            activeOpacity={0.7}
-                                        >
-                                            <Ionicons name="remove" size={18} color={manualQuantity <= 1 ? '#d4d4d8' : '#18181b'} />
-                                        </TouchableOpacity>
-                                        <Text style={styles.qtyValue}>{manualQuantity}</Text>
-                                        <TouchableOpacity
-                                            style={styles.stepBtn}
-                                            onPress={() => setManualQuantity((q) => q + 1)}
-                                            activeOpacity={0.7}
-                                        >
-                                            <Ionicons name="add" size={18} color="#18181b" />
-                                        </TouchableOpacity>
-                                    </View>
-                                </View>
-                                <View style={styles.totalRow}>
-                                    <Text style={styles.totalLabel}>Total</Text>
-                                    <Text style={styles.totalValue}>
-                                        ₱ {manualTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                    </Text>
-                                </View>
-                                <View style={styles.actionRow}>
-                                    <TouchableOpacity style={styles.rescanBtn} onPress={resetManualOrder} activeOpacity={0.7}>
-                                        <Ionicons name="close" size={15} color="#71717a" />
-                                        <Text style={styles.rescanText}>Cancel</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                        style={[
-                                            styles.confirmBtn,
-                                            (!manualPrice || parseFloat(manualPrice) <= 0 || manualConfirming) && styles.confirmBtnDisabled,
-                                        ]}
-                                        onPress={handleManualConfirm}
-                                        activeOpacity={0.85}
-                                        disabled={!manualPrice || parseFloat(manualPrice) <= 0 || manualConfirming}
-                                    >
-                                        {manualConfirming ? (
-                                            <ActivityIndicator size="small" color="#18181b" />
-                                        ) : (
-                                            <>
-                                                <Ionicons name="checkmark" size={17} color="#18181b" />
-                                                <Text style={styles.confirmText}>Confirm Order</Text>
-                                            </>
-                                        )}
-                                    </TouchableOpacity>
-                                </View>
-                            </>
-                        )}
-                        {manualConfirmed && manualOrderProduct && (
-                            <View style={styles.resultInner}>
-                                <Ionicons name="checkmark-circle" size={52} color="#4ade80" />
-                                <Text style={styles.confirmedTitle}>Order Added!</Text>
-                                <Text style={styles.confirmedSub}>{manualQuantity}× {manualOrderProduct.name}</Text>
-                                <Text style={styles.confirmedTotal}>
-                                    ₱ {manualTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                </Text>
-                                <View style={styles.actionRow}>
-                                    <TouchableOpacity style={styles.rescanBtn} onPress={resetManualOrder} activeOpacity={0.7}>
-                                        <Ionicons name="arrow-back" size={15} color="#71717a" />
-                                        <Text style={styles.rescanText}>Back to Menu</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            </View>
-                        )}
-                    </View>
+                    {manualOrderProduct && (
+                        <ManualOrderSheet
+                            product={manualOrderProduct}
+                            insets={{ bottom: insets.bottom }}
+                            onConfirm={handleManualConfirm}
+                            onClose={resetManualOrder}
+                        />
+                    )}
                 </View>
             </Modal>
 
+            {/* ── QR Scanner modal ── */}
             <Modal
                 visible={scannerOpen}
                 animationType="slide"
@@ -1021,7 +1478,7 @@ export default function HomeScreen() {
                                 <Ionicons name="alert-circle-outline" size={40} color="#f87171" />
                                 <Text style={styles.notFoundTitle}>Product not found</Text>
                                 <Text style={styles.notFoundSub}>
-                                    The scanned code doesn't match any dish in the menu.
+                                    The scanned code doesn't match any item in the menu.
                                 </Text>
                                 <View style={styles.debugBox}>
                                     <Text style={styles.debugLabel}>Raw scanned value:</Text>
@@ -1039,21 +1496,66 @@ export default function HomeScreen() {
                                     {scannedProduct.image_url && scannedProduct.image_url.trim() !== '' ? (
                                         <Image source={{ uri: scannedProduct.image_url }} style={styles.resultImg} />
                                     ) : (
-                                        <View style={styles.resultImgPlaceholder}>
-                                            <Ionicons name="restaurant-outline" size={28} color="#c4b5a0" />
+                                        <View style={[styles.resultImgPlaceholder, scannedProduct.product_type === 'stock' && stockStyles.resultImgStock]}>
+                                            <Ionicons
+                                                name={scannedProduct.product_type === 'stock' ? 'cube-outline' : 'restaurant-outline'}
+                                                size={28}
+                                                color={scannedProduct.product_type === 'stock' ? '#93c5fd' : '#c4b5a0'}
+                                            />
                                         </View>
                                     )}
                                     <View style={styles.productHeaderText}>
                                         <Text style={styles.resultName} numberOfLines={2}>{scannedProduct.name}</Text>
                                         <Text style={styles.resultCategory}>{scannedProduct.category}</Text>
+                                        {scannedProduct.product_type === 'stock' && (
+                                            <StockBadge product={scannedProduct} />
+                                        )}
                                     </View>
                                 </View>
-                                <View style={styles.priceRow}>
-                                    <Text style={styles.priceLabel}>Price / serving</Text>
-                                    <Text style={styles.priceValue}>
-                                        ₱ {Number(scannedProduct.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                    </Text>
-                                </View>
+
+                                {scannedProduct.product_type === 'stock' ? (
+                                    /* Stock item: show cost, stock qty, selling price input */
+                                    <>
+                                        <View style={stockStyles.sheetInfoTable}>
+                                            <View style={stockStyles.sheetInfoRow}>
+                                                <Ionicons name="cube-outline" size={13} color="#6b7280" />
+                                                <Text style={stockStyles.sheetInfoLabel}>Available</Text>
+                                                <Text style={stockStyles.sheetInfoValue}>
+                                                    {(scannedProduct.stock_quantity ?? 0).toLocaleString()} {scannedProduct.stock_unit || 'units'}
+                                                </Text>
+                                            </View>
+                                            <View style={stockStyles.sheetInfoDivider} />
+                                            <View style={stockStyles.sheetInfoRow}>
+                                                <Ionicons name="pricetag-outline" size={13} color="#6b7280" />
+                                                <Text style={stockStyles.sheetInfoLabel}>Cost per unit</Text>
+                                                <Text style={stockStyles.sheetInfoValue}>
+                                                    ₱ {Number(scannedProduct.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </Text>
+                                            </View>
+                                        </View>
+                                        <Text style={styles.manualPriceLabel}>Selling price (₱)</Text>
+                                        <View style={styles.priceInputWrap}>
+                                            <Text style={styles.pesoSign}>₱</Text>
+                                            <TextInput
+                                                style={styles.priceInput}
+                                                value={scannedPrice}
+                                                onChangeText={(v) => setScannedPrice(v.replace(/[^0-9.]/g, ''))}
+                                                keyboardType="decimal-pad"
+                                                placeholder={String(scannedProduct.selling_price ?? scannedProduct.price)}
+                                                placeholderTextColor="#a1a1aa"
+                                                returnKeyType="done"
+                                            />
+                                        </View>
+                                    </>
+                                ) : (
+                                    <View style={styles.priceRow}>
+                                        <Text style={styles.priceLabel}>Price / serving</Text>
+                                        <Text style={styles.priceValue}>
+                                            ₱ {Number(scannedProduct.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </Text>
+                                    </View>
+                                )}
+
                                 <View style={styles.divider} />
                                 <View style={styles.qtyRow}>
                                     <Text style={styles.qtyLabel}>Quantity</Text>
@@ -1067,8 +1569,13 @@ export default function HomeScreen() {
                                         </TouchableOpacity>
                                         <Text style={styles.qtyValue}>{quantity}</Text>
                                         <TouchableOpacity
-                                            style={styles.stepBtn}
-                                            onPress={() => setQuantity((q) => q + 1)}
+                                            style={[
+                                                styles.stepBtn,
+                                                scannedProduct.product_type === 'stock' && quantity >= (scannedProduct.stock_quantity ?? Infinity) && styles.stepBtnDisabled,
+                                            ]}
+                                            onPress={() => setQuantity((q) => scannedProduct.product_type === 'stock'
+                                                ? Math.min(scannedProduct.stock_quantity ?? q + 1, q + 1)
+                                                : q + 1)}
                                             activeOpacity={0.7}
                                         >
                                             <Ionicons name="add" size={18} color="#18181b" />
@@ -1078,7 +1585,7 @@ export default function HomeScreen() {
                                 <View style={styles.totalRow}>
                                     <Text style={styles.totalLabel}>Total</Text>
                                     <Text style={styles.totalValue}>
-                                        ₱ {total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        ₱ {scannedTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                     </Text>
                                 </View>
                                 <View style={styles.actionRow}>
@@ -1087,8 +1594,12 @@ export default function HomeScreen() {
                                         <Text style={styles.rescanText}>Rescan</Text>
                                     </TouchableOpacity>
                                     <TouchableOpacity
-                                        style={[styles.confirmBtn, confirming && styles.confirmBtnDisabled]}
-                                        onPress={handleConfirm}
+                                        style={[
+                                            styles.confirmBtn,
+                                            scannedProduct.product_type === 'stock' && stockStyles.confirmBtnStock,
+                                            confirming && styles.confirmBtnDisabled,
+                                        ]}
+                                        onPress={handleConfirmScanned}
                                         activeOpacity={0.85}
                                         disabled={confirming}
                                     >
@@ -1097,7 +1608,9 @@ export default function HomeScreen() {
                                         ) : (
                                             <>
                                                 <Ionicons name="checkmark" size={17} color="#18181b" />
-                                                <Text style={styles.confirmText}>Confirm Order</Text>
+                                                <Text style={styles.confirmText}>
+                                                    {scannedProduct.product_type === 'stock' ? 'Confirm Sale' : 'Confirm Order'}
+                                                </Text>
                                             </>
                                         )}
                                     </TouchableOpacity>
@@ -1107,10 +1620,12 @@ export default function HomeScreen() {
                         {confirmed && scannedProduct && (
                             <View style={styles.resultInner}>
                                 <Ionicons name="checkmark-circle" size={52} color="#4ade80" />
-                                <Text style={styles.confirmedTitle}>Order Added!</Text>
+                                <Text style={styles.confirmedTitle}>
+                                    {scannedProduct.product_type === 'stock' ? 'Sale Recorded!' : 'Order Added!'}
+                                </Text>
                                 <Text style={styles.confirmedSub}>{quantity}× {scannedProduct.name}</Text>
                                 <Text style={styles.confirmedTotal}>
-                                    ₱ {total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    ₱ {scannedTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                 </Text>
                                 <View style={styles.actionRow}>
                                     <TouchableOpacity style={styles.rescanBtn} onPress={resetScanner} activeOpacity={0.7}>
@@ -1137,6 +1652,9 @@ export default function HomeScreen() {
     );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Styles — only additions/overrides; originals preserved below
+// ─────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#fdfbf7' },
     viewContainer: { flex: 1 },
@@ -1447,6 +1965,137 @@ const styles = StyleSheet.create({
     },
 });
 
+// ── Stock-specific styles ─────────────────────────────────────────────────────
+const stockStyles = StyleSheet.create({
+    // Card
+    stockCard: { borderWidth: 1.5, borderColor: '#dbeafe' },
+    stockPlaceholder: { backgroundColor: '#eff6ff' },
+
+    typeTag: {
+        flexDirection: 'row', alignItems: 'center', gap: 3,
+        backgroundColor: '#dbeafe', borderRadius: 6,
+        paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start',
+        marginBottom: 4,
+    },
+    typeTagText: { fontSize: 9, fontWeight: '800', color: '#1d4ed8', letterSpacing: 0.5 },
+
+    stockQtyRow: {
+        flexDirection: 'row', alignItems: 'baseline', gap: 3,
+        backgroundColor: '#f0f9ff', borderRadius: 8, borderWidth: 1,
+        paddingHorizontal: 8, paddingVertical: 4, marginVertical: 4,
+    },
+    stockQty: { fontSize: 18, fontWeight: '900' },
+    stockUnit: { fontSize: 11, color: '#6b7280', fontWeight: '500' },
+
+    priceTable: {
+        width: '100%', backgroundColor: '#f8fafc', borderRadius: 10,
+        paddingHorizontal: 10, paddingVertical: 6, gap: 4,
+    },
+    priceTableRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    priceTableDivider: { height: 1, backgroundColor: '#e2e8f0' },
+    priceTableLabel: { fontSize: 10, color: '#94a3b8', fontWeight: '600' },
+    priceTableValue: { fontSize: 12, fontWeight: '700', color: '#334155' },
+    priceTableSell: { color: '#0f766e' },
+
+    outOfStockOverlay: {
+        backgroundColor: '#fef2f2', borderRadius: 8, paddingHorizontal: 10,
+        paddingVertical: 5, alignSelf: 'center', marginTop: 4,
+    },
+    outOfStockText: { fontSize: 11, fontWeight: '700', color: '#dc2626' },
+
+    // List row
+    rowDisabled: { opacity: 0.55 },
+    stockTilePlaceholder: { backgroundColor: '#eff6ff' },
+    tileNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+    typeTagSmall: {
+        backgroundColor: '#dbeafe', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1,
+    },
+    typeTagSmallText: { fontSize: 8, fontWeight: '800', color: '#1d4ed8', letterSpacing: 0.4 },
+    tileStockRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 },
+    tileStockDot: { width: 6, height: 6, borderRadius: 3 },
+    tileStockQty: { fontSize: 11, fontWeight: '700' },
+    tilePriceRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    tileCost: { fontSize: 11, color: '#94a3b8', fontWeight: '500' },
+    tilePriceDivider: { width: 1, height: 10, backgroundColor: '#e2e8f0' },
+    tileSell: { fontSize: 11, fontWeight: '700', color: '#0f766e' },
+
+    // Stock badge
+    badge: {
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start',
+        marginTop: 4,
+    },
+    badgeOk: { backgroundColor: '#dcfce7' },
+    badgeLow: { backgroundColor: '#fef3c7' },
+    badgeEmpty: { backgroundColor: '#fee2e2' },
+    badgeText: { fontSize: 10, fontWeight: '700' },
+    badgeTextOk: { color: '#15803d' },
+    badgeTextLow: { color: '#b45309' },
+    badgeTextEmpty: { color: '#dc2626' },
+
+    // Info row
+    infoRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    infoText: { fontSize: 11, color: '#6b7280' },
+
+    // Sheet info table
+    sheetInfoTable: {
+        backgroundColor: '#f0f9ff', borderRadius: 14, borderWidth: 1,
+        borderColor: '#bae6fd', paddingHorizontal: 14, paddingVertical: 10, gap: 8,
+    },
+    sheetInfoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    sheetInfoLabel: { fontSize: 12, color: '#64748b', flex: 1 },
+    sheetInfoValue: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
+    sheetInfoDivider: { height: 1, backgroundColor: '#bae6fd' },
+
+    // Profit preview
+    profitPreview: {
+        width: '100%', backgroundColor: '#f0fdf4', borderRadius: 14, borderWidth: 1,
+        borderColor: '#bbf7d0', padding: 12, gap: 6,
+    },
+    profitPreviewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    profitPreviewLabel: { fontSize: 12, fontWeight: '600', color: '#166534' },
+    profitPreviewValue: { fontSize: 15, fontWeight: '900', color: '#16a34a' },
+    profitNeg: { color: '#dc2626' },
+    marginBar: { height: 4, backgroundColor: '#d1fae5', borderRadius: 2, overflow: 'hidden' },
+    marginBarFill: { height: '100%', borderRadius: 2 },
+    marginLabel: { fontSize: 10, color: '#4b7c56', fontWeight: '500' },
+
+    // Confirm button stock variant
+    confirmBtnStock: { backgroundColor: '#93c5fd' },
+
+    // Header name row
+    headerNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+    typeTagInline: {
+        backgroundColor: '#dbeafe', borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2,
+    },
+    typeTagInlineText: { fontSize: 9, fontWeight: '800', color: '#1d4ed8' },
+
+    // Result image stock
+    resultImgStock: { backgroundColor: '#eff6ff' },
+
+    // Section headers
+    sectionHeader: {
+        flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12,
+    },
+    sectionHeaderText: {
+        fontSize: 13, fontWeight: '700', color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.6,
+    },
+    sectionBadge: {
+        backgroundColor: '#dbeafe', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, marginLeft: 4,
+    },
+    sectionBadgeText: { fontSize: 10, fontWeight: '700', color: '#1d4ed8' },
+
+    // Order history icon for stock
+    orderIconStock: { backgroundColor: '#dbeafe' },
+
+    // Confirmed profit line
+    confirmedProfit: {
+        flexDirection: 'row', alignItems: 'center', gap: 5,
+        backgroundColor: '#dcfce7', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6,
+    },
+    confirmedProfitText: { fontSize: 12, fontWeight: '700', color: '#16a34a' },
+});
+
 const receiptStyles = StyleSheet.create({
     overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
     sheet: {
@@ -1483,6 +2132,19 @@ const receiptStyles = StyleSheet.create({
         backgroundColor: '#f4f4f5', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4,
     },
     sourcePillText: { fontSize: 11, color: '#71717a', fontWeight: '600' },
+    // Profit breakdown block
+    profitBlock: { paddingHorizontal: 18, paddingVertical: 10, gap: 4 },
+    profitRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    profitLabel: { fontSize: 12, color: '#6b7280' },
+    profitValue: { fontSize: 13, fontWeight: '600', color: '#18181b' },
+    profitCost: { fontSize: 13, fontWeight: '600', color: '#dc2626' },
+    profitMarginRow: {
+        marginTop: 4, borderTopWidth: 1, borderTopColor: '#f0fdf4',
+        paddingTop: 6,
+    },
+    profitMarginLabel: { fontSize: 13, fontWeight: '700', color: '#166534' },
+    profitMarginValue: { fontSize: 15, fontWeight: '900', color: '#16a34a' },
+
     totalBlock: {
         flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
         paddingHorizontal: 18, paddingVertical: 14, backgroundColor: '#ffecd0',

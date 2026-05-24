@@ -15,9 +15,11 @@ export interface OrderPayload {
   product_name: string;
   product_category: string;
   unit_price: number;
+  unit_cost: number;         // cost per unit (= unit_price for food, product.price for stock)
   quantity: number;
   total_price: number;
   source: 'qr_scan' | 'manual';
+  product_type: 'food' | 'stock';
   created_at: string;
 }
 
@@ -26,21 +28,34 @@ export interface OrderHistoryItem extends OrderPayload {
   synced_at?: string;
 }
 
+export interface BuildOrderOptions {
+  unit_cost?: number;        // override cost (defaults to unitPrice for food)
+  product_type?: 'food' | 'stock';
+}
+
 export function buildOrder(
   product: { id: string; name: string; category: string; price: number },
   quantity: number,
   unitPrice: number,
-  source: 'qr_scan' | 'manual'
+  source: 'qr_scan' | 'manual',
+  options: BuildOrderOptions = {}
 ): OrderPayload {
+  const productType = options.product_type ?? 'food';
+  // For stock items: cost = product.price (the DB `price` column = cost per unit)
+  // For food items: cost = unitPrice (no separate cost tracking)
+  const unitCost = options.unit_cost ?? (productType === 'stock' ? product.price : unitPrice);
+
   return {
     idempotency_key: uuidv4(),
     product_id: String(product.id),
     product_name: product.name,
     product_category: product.category ?? '',
     unit_price: unitPrice,
+    unit_cost: unitCost,
     quantity,
     total_price: parseFloat((unitPrice * quantity).toFixed(2)),
     source,
+    product_type: productType,
     created_at: new Date().toISOString(),
   };
 }
@@ -114,9 +129,11 @@ async function upsertToSupabase(order: OrderPayload): Promise<boolean> {
       product_name: order.product_name,
       product_category: order.product_category,
       unit_price: order.unit_price,
+      unit_cost: order.unit_cost,
       quantity: order.quantity,
       total_price: order.total_price,
       source: order.source,
+      product_type: order.product_type,
       created_at: order.created_at,
       synced_at: new Date().toISOString(),
     },
@@ -193,7 +210,11 @@ export async function setCachedProducts(products: any[]): Promise<void> {
 
 export async function fetchProducts(): Promise<{ data: any[]; fromCache: boolean }> {
   try {
-    const { data, error } = await supabase.from('products').select('*');
+    const { data, error } = await supabase
+      .from('products')
+      .select('id, name, price, category, image_url, product_type, stock_quantity, stock_unit, low_stock_threshold, selling_price')
+      .order('product_type')   // food first, stock second
+      .order('name');
     if (!error && data && data.length > 0) {
       await setCachedProducts(data);
       return { data, fromCache: false };
