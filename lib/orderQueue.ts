@@ -191,11 +191,9 @@ export async function getPendingCount(): Promise<number> {
 export async function getCachedProducts(): Promise<any[] | null> {
   try {
     const raw = await AsyncStorage.getItem(PRODUCTS_CACHE_KEY);
-    const ts = await AsyncStorage.getItem(PRODUCTS_CACHE_TS_KEY);
-    if (!raw || !ts) return null;
-    const age = Date.now() - parseInt(ts, 10);
-    if (age > CACHE_TTL_MS) return null;
+    if (!raw) return null;
     return JSON.parse(raw);
+    // TTL is no longer enforced on reads — network fetch overwrites on success
   } catch {
     return null;
   }
@@ -213,7 +211,7 @@ export async function fetchProducts(): Promise<{ data: any[]; fromCache: boolean
     const { data, error } = await supabase
       .from('products')
       .select('id, name, price, category, image_url, product_type, stock_quantity, stock_unit, low_stock_threshold, selling_price')
-      .order('product_type')   // food first, stock second
+      .order('product_type')
       .order('name');
     if (!error && data && data.length > 0) {
       await setCachedProducts(data);
@@ -221,10 +219,11 @@ export async function fetchProducts(): Promise<{ data: any[]; fromCache: boolean
     }
   } catch {}
 
+  // Offline path — return whatever cache exists, regardless of age
   const cached = await getCachedProducts();
   if (cached && cached.length > 0) {
     return { data: cached, fromCache: true };
   }
 
-  return { data: [], fromCache: false };
+  return { data: [], fromCache: true }; // <-- was: fromCache: false
 }
